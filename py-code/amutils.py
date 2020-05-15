@@ -52,10 +52,10 @@ def surprise(pMs, data, hipoteses, years_range = None):
 
     soma_das_diferencas = np.zeros(pMs.shape)
     vetor_diferencas = np.zeros((len(pMs),len(data[ano, :][valid_artist_indices])))
-    
+
     for i in range(len(diferencas)):
       vetor_diferencas[i] = data[ano, :][valid_artist_indices] - normalize(hipoteses[i](data, ano)[:len(valid_artist_indices)])
-      
+
     for artista in range(len(valid_artist_indices)):
 
       for i in range(len(diferencas)):
@@ -79,18 +79,18 @@ def surprise(pMs, data, hipoteses, years_range = None):
 
 
       if voteSum >= 0 :
-        surpriseData[ano, artista] = np.abs(kl) 
+        surpriseData[ano, artista] = np.abs(kl)
       else:
         surpriseData[ano, artista] = -1*np.abs(kl)
-      
+
     #Now lets globally update our model belief.
-    
+
     for j in range(len(pMs)):
       pDMs[j] = 1 - (0.5 * soma_das_diferencas[j])
       pMDs[j] = pMs[j] * pDMs[j]
       pMs[j] = pMDs[j]
 
-    #Normalize  
+    #Normalize
     # for j in range(len(pMs)):
     #   pMs[j] = pMs[j] / sum(pMs)
     pMs = normalize(pMs)
@@ -166,7 +166,7 @@ def build_graph(json_data, edges_to_consider=None,
                 nodes_to_consider=None,
                 restrictive=False,
                 decades_to_consider = None):
-    
+
     G = nx.DiGraph()
     if nodes_to_consider is None:
         nodes_to_consider = set(json_data.keys())
@@ -193,12 +193,12 @@ def build_graph(json_data, edges_to_consider=None,
                     G[artist][by]['weight'] += 1
                 else:
                     G.add_weighted_edges_from([(artist, by, 1)])
-                continue                
+                continue
             if list(json_data[artist][edge_consideration_criterion].values())!=[] and list(json_data[by][edge_consideration_criterion].values())!=[]:
                 dupla = list(json_data[artist][edge_consideration_criterion].values())[0], list(json_data[by][edge_consideration_criterion].values())[0]
                 if dupla in edges_to_consider:
                     G.add_edge(artist, by)
-                    
+
     nx.set_node_attributes(G, json_data)
     return G
 
@@ -215,7 +215,7 @@ def build_graph_who_sampled(json_data, edges_to_consider=None):
                   G[artist_that_sampled][who_was_sampled]['weight'] += 1
             else:
                    G.add_weighted_edges_from([(artist_that_sampled, who_was_sampled, 1)])
-          
+
             G.add_edge
     nx.set_node_attributes(G, json_data)
     return G
@@ -236,11 +236,11 @@ def build_genre_graph(json_data):
     G= nx.DiGraph()
     if nodes_to_consider is None:
         nodes_to_consider = set(json_data.keys())
-        
+
     for artist in nodes_to_consider:
         artist_node = json_data[artist]
         influencer_set = set(map(extract_id, artist_node['influencer'])) # lista com todos os ids dos influencer do artist_note
-        try:       
+        try:
             u = next(iter(json_data[artist]['genres'].values()))
             for influencer in influencer_set:
                 try:
@@ -261,7 +261,7 @@ def build_genre_graph(json_data):
 
 
 def load_am_json_data():
-    fpath = '../data/artists.json.gz'
+    fpath = '../data/allmusic-data.json.gz'
     with gzip.open(fpath) as gzip_file:
         json_data = json.load(gzip_file)
         return json_data
