@@ -1,0 +1,470 @@
+---
+title: "Thetas over time"
+output:
+    html_document:
+    df_print: paged
+theme: sandstone
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(here)
+library(viridis)
+library(broom)
+library(hrbrthemes)
+theme_set(theme_ipsum())
+
+knitr::opts_chunk$set(tidy = FALSE,
+                      fig.width = 6,
+                      fig.height = 5)
+
+# library(thematic)
+```
+
+## Thetas
+
+```{r read}
+ws_t_raw = read_csv(here::here("theta-csvs/theta_table_whosampled.csv.gz"))
+```
+
+
+```{r}
+glimpse(ws_t_raw)
+```
+
+```{r}
+skimr::skim(ws_t_raw)
+```
+
+### Transform
+
+```{r}
+end_ranks = ws_t_raw %>% 
+  filter(ano == max(ano)) %>% 
+  group_by(metric) %>% 
+  select(artist, metric, end_theta_i = theta) %>% 
+  ungroup()
+
+ws_t = ws_t_raw %>% 
+  filter(ano >= 1960) %>% 
+  left_join(end_ranks, by = c("metric", "artist")) %>% 
+  mutate(name = artist) %>% 
+  group_by(metric, ano) %>% 
+  ungroup()
+
+ws_t_wide = ws_t %>% 
+  select(artist, name, ano, theta, metric) %>% 
+  pivot_wider(names_from = metric, values_from = theta)
+
+with_history = ws_t %>% 
+  count(metric, artist) %>%
+  filter(n > 2) %>% 
+  distinct(metric, artist) %>% 
+  count(artist) %>% 
+  filter(n == 2) %>% 
+  pull(artist)
+
+ws_t_h = ws_t %>% 
+  filter(artist %in% with_history)
+
+ws_t_h_wide = ws_t_wide %>% 
+  filter(artist %in% with_history)
+```
+
+### Explore
+
+Some exemplary artists
+
+```{r}
+few_artists = function(d, n){
+  d %>% 
+    filter(metric == "disruption") %>% 
+    sample_n(n) %>% 
+    pull(artist)
+}
+
+examples_high_t = ws_t_h %>% 
+  group_by(metric, artist, name) %>%
+  summarise(avg = mean(theta), count = n()) %>%
+  filter(count > 2) %>%
+  ungroup %>% 
+  group_by(metric) %>% 
+  top_n(3, avg) 
+examples_high_t
+
+examples_sd_t = ws_t_h %>% 
+  group_by(metric, artist, name) %>%
+  summarise(sd = sd(theta)) %>%
+  ungroup %>% 
+  group_by(metric) %>% 
+  top_n(3, sd) 
+
+
+model_t = function(d){
+  lm(theta ~ ano, data = d)
+}
+
+# models = ws_t_h %>%
+#   group_by(artist, metric) %>% 
+#   nest() %>% 
+#   mutate(model = map(data, model_t))
+# 
+# coefs = models %>% 
+#   mutate(coefs = map(model, tidy)) %>% 
+#   unnest(coefs)  %>% 
+#   filter(term == "ano")
+# 
+# examples_grow_disrupt = coefs %>% 
+#   select(artist, metric, estimate) %>% 
+#   filter(metric == "disruption") %>% 
+#   ungroup %>% 
+#   top_n(4, estimate)
+# 
+# examples_grow_disrupt
+```
+
+Everything over time
+
+```{r}
+plot_traj_sbs = function(d, artists = c(), names = c()){
+  d %>% 
+    filter(artist %in% artists | name %in% names) %>%
+    ggplot(aes(x = ano, y = theta, color = name, group = artist)) +
+    facet_wrap(~ metric) + 
+    geom_line() + 
+    labs(x = "year", y = expression(1-theta))
+}
+
+set.seed(1)
+
+ws_t %>% 
+  plot_traj_sbs(few_artists(., 5))
+
+# ws_t %>% 
+#   plot_traj_sbs(examples_grow_disrupt$artist)
+
+ws_t %>% 
+  plot_traj_sbs(names = c("Kraftwerk", "John Cage", "Sun Ra"))
+
+ws_t %>% 
+  plot_traj_sbs(names = examples_sd_t$name) 
+```
+
+All thetas over time together
+
+```{r}
+# ws_t %>% 
+#   filter(metric == "pagerank") %>% 
+#   ggplot(aes(x = ano, y = end_theta_i, fill = theta)) + 
+#   facet_grid(. ~ metric) +
+#   geom_tile() + 
+#   scale_fill_viridis(direction =  -1, option = "inferno")
+# 
+# ws_t %>% 
+#   filter(metric == "disruption") %>% 
+#   ggplot(aes(x = ano, y = end_theta_i, fill = theta)) + 
+#   facet_grid(. ~ metric) +
+#   geom_tile() + 
+#   scale_fill_viridis(direction =  -1, option = "inferno")
+```
+
+#### Trajectories on a xy plane.
+
+```{r}
+ws_t_wide %>% 
+  # filter(artist %in% few_artists(., 3)) %>%
+  # filter(name %in% c("Kraftwerk")) %>%
+  # filter(artist %in% examples_grow_disrupt$artist) %>%
+  filter(name %in% examples_sd_t$name) %>%
+  ggplot(aes(x = pagerank, y = disruption, color = name, group = artist)) +
+  geom_line() + 
+  geom_point(aes(size = ano, alpha = ano)) 
+```
+
+Are there correlations?
+
+```{r}
+ws_t_wide %>% 
+  filter(!is.na(pagerank), !is.na(disruption)) %>% 
+  ggplot(aes(x = pagerank, y = disruption)) +
+  geom_hex()
+  # geom_point(alpha = .2, size = .5) 
+```
+
+#### Some interesting trajectories
+
+```{r}
+ws_t_wide %>% 
+  filter(name %in% c("Stevie Wonder", "Jorge Ben", "Shirley Bassey", "Kraftwerk")) %>% 
+  ggplot(aes(x = pagerank, y = disruption, group = artist)) +
+  facet_wrap(~ name) +
+  geom_line() + 
+  geom_point(aes(size = ano, alpha = ano)) + 
+  scale_alpha_continuous(range = c(.2, .5))
+```
+
+---
+
+## Surprises
+
+```{r}
+ws_s = read_csv(here::here("surprises-csvs/whosampled_surprises.csv.gz"))
+
+ws_s = ws_s %>%
+  mutate(
+    surprise_disrupt = disrupt_surprise_hyp_growth_t +
+      disrupt_surprise_hyp_past_t,
+    surprise_pr = pagerank_surprise_hyp_growth_t + 
+      pagerank_surprise_hyp_past_t,
+    surprise_total = surprise_disrupt + surprise_pr
+  )
+```
+
+```{r}
+glimpse(ws_s)
+```
+
+Final dataframe
+
+```{r}
+whosampled =
+  ws_t_h_wide %>%
+  filter(!is.na(pagerank + disruption)) %>% 
+  left_join(
+    select(ws_s, name, year, matches("surprise")),
+    by = c("ano" = "year", "name")
+  ) %>% 
+  filter(!is.na(surprise_total)) %>% 
+  group_by(artist) %>% 
+  arrange(ano) %>% 
+  mutate(year_index = 1:n()) %>% 
+  ungroup()
+
+glimpse(whosampled)
+```
+
+### Agregate views
+
+Surprise x year index
+
+```{r}
+whosampled %>% 
+  group_by(artist) %>% 
+  mutate(i = 1:n()) %>% 
+  pivot_longer(matches("surprise"), names_to = "surprise") %>% 
+  ggplot(aes(x = i, y = value, group = i)) +
+  facet_wrap(~surprise, ncol = 2) +
+  # ggbeeswarm::geom_quasirandom(size = .3) +
+  geom_boxplot(coef = 1000) +
+  scale_y_log10(limits = c(1e-3, 1e3)) +
+  labs(x = "Year index from appearance onwards")
+```
+
+
+
+```{r}
+whosampled %>% 
+  group_by(artist) %>% 
+  mutate(i = 1:n()) %>% 
+  ggplot(aes(x = i, y = surprise_total, group = i)) +
+  geom_boxplot(outlier.color = NA) +
+  scale_y_log10() + 
+  labs(x = "Year index from appearance onwards")
+```
+
+```{r}
+whosampled %>% 
+  group_by(artist) %>% 
+  arrange(ano) %>% 
+  mutate(i = 1:n()) %>% 
+  mutate(delta = surprise_total - lag(surprise_total)) %>%  
+  ggplot(aes(x = i, y = delta, group = i)) +
+  # ggbeeswarm::geom_quasirandom(size = .3) +
+  geom_boxplot(coef = 1e9) + 
+  # geom_boxplot(coef = 1000) +
+  labs(x = "Year index from appearance onwards") + 
+  ylim(-25, 25)
+```
+
+
+```{r}
+whosampled %>% 
+  ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
+  geom_point(alpha = .15, size = .25) + 
+  scale_x_log10() + 
+  scale_y_log10()
+
+whosampled %>% 
+  ggplot(aes(x = disrupt_surprise_hyp_past_t, y = disrupt_surprise_hyp_growth_t)) + 
+  geom_point(alpha = .15, size = .25) + 
+  scale_x_log10() + 
+  scale_y_log10()
+
+
+whosampled %>% 
+  ggplot(aes(x = pagerank_surprise_hyp_past_t, y = pagerank_surprise_hyp_growth_t)) + 
+  geom_point(alpha = .15, size = .25) + 
+  scale_x_log10(limits = c(1e-6, 1e3)) + 
+  scale_y_log10(limits = c(1e-6, 1e3))
+```
+
+
+#### highest surprise at some point
+
+
+```{r}
+plot_trajectory = function(artists, df){
+  df %>% 
+    filter(artist %in% artists) %>% 
+    ggplot(aes(x = pagerank, y = disruption, color = year_index, group = artist)) +
+    facet_wrap(~ name) +
+    geom_line(size = 1.2, alpha = .5) + 
+    geom_point(aes(size = surprise_total), alpha = .8) +
+    scale_color_continuous(trans = "reverse")
+}
+```
+
+
+From all years, it's always the first.
+
+```{r}
+whosampled %>% 
+  group_by(artist) %>% 
+  summarise(surprise_total = max(surprise_total)) %>% 
+  top_n(4, surprise_total) %>% 
+  distinct(artist) %>% 
+  pull(artist) %>% 
+  plot_trajectory(whosampled)
+```
+
+```{r}
+ws_t %>% 
+  plot_traj_sbs(names = c("Kraftwerk"))
+```
+
+```{r}
+ws_t %>% 
+  filter(name == "Kraftwerk")
+```
+
+
+```{r}
+c("Kraftwerk") %>% 
+  plot_trajectory(whosampled)
+```
+
+
+### Highest *after* first year
+
+
+```{r}
+whosampled %>% 
+  group_by(artist) %>% 
+  arrange(ano) %>% 
+  mutate(delta = surprise_total - lag(surprise_total)) %>%  
+  summarise(surprise_total = max(delta, na.rm = T)) %>% 
+  top_n(9 , surprise_total) %>% 
+  distinct(artist) %>% 
+  pull(artist) %>% 
+  plot_trajectory(whosampled)
+```
+
+
+
+
+```{r}
+whosampled %>% 
+  filter(name %in% c("Édith Piaf", "Miles Davis")) %>% 
+  pull(artist) %>% 
+  plot_trajectory(whosampled)
+```
+
+
+#### highest average total surprise
+
+```{r}
+whosampled %>% 
+  group_by(artist) %>% 
+  summarise(surprise_total = mean(surprise_total)) %>% 
+  top_n(6, surprise_total) %>% 
+  distinct(artist) %>% 
+  pull(artist) %>% 
+  plot_trajectory(whosampled) +
+  xlim(.3, 1)
+```
+
+
+Some interesting artists
+
+```{r}
+whosampled %>%
+  filter(
+    name %in% c(
+      "Stevie Wonder",
+      "Jorge Ben",
+      "Shirley Bassey",
+      "Fela Kuti",
+      "Miles Davis"
+    ),
+    ano >= 1960
+  ) %>%
+  pull(artist) %>% 
+  plot_trajectory(whosampled)  + 
+  xlim(.3, 1)
+```
+
+```{r}
+ws_s_wide = whosampled %>% 
+  pivot_longer(cols = matches("surprise"), names_to = "surprise") 
+  
+ws_s_wide %>% 
+  ggplot(aes(x = value)) + 
+  geom_density() +
+  facet_grid(surprise ~ ano) + 
+  scale_x_log10(limits = c(1e-4, 1)) 
+
+whosampled %>% 
+  ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
+  geom_point(alpha = .2, size = .5, color = "brown") + 
+  facet_wrap(~ano) +
+  scale_x_log10(limits = c(1e-6, 1e1)) + 
+  scale_y_log10() +
+  NULL
+```
+
+```{r}
+ws_s_wide %>% 
+  filter(str_starts(surprise, "surprise")) %>% 
+  ggplot(aes(x = ano, y = value, group = ano, fill = surprise)) + 
+  geom_violin() +
+  geom_boxplot(width = .5, coef = 1e6, fill = "white") + 
+  facet_grid(. ~ surprise) + 
+  scale_y_log10(
+                limits = c(1e-4, 1e4)
+                ) +
+  theme(legend.position = "None") +
+  NULL
+```
+
+```{r}
+ws_s_wide %>% 
+  group_by(surprise, ano) %>% 
+  summarise(value = sum(value)) %>% 
+  ggplot(aes(x = ano, y = value, group = surprise)) + 
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ surprise, ncol = 2) 
+```
+
+
+```{r}
+whosampled %>% 
+  filter(ano >= 1960, metric == "pagerank") %>%
+  ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
+  geom_point(alpha = .2, size = .5, color = "brown") + 
+  facet_wrap(~ano) +
+  scale_x_log10(limits = c(1e-6, 1e1)) + 
+  scale_y_log10() +
+  NULL
+```
+
