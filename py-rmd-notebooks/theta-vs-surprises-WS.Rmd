@@ -24,7 +24,41 @@ knitr::opts_chunk$set(tidy = FALSE,
 ## Thetas
 
 ```{r read}
-ws_t_raw = read_csv(here::here("theta-csvs/theta_table_whosampled.csv.gz"))
+# ws_t_raw = read_csv(here::here("theta-csvs/theta_table_whosampled.csv.gz"))
+degrees = read_csv(here::here("graph-csvs/ws-degrees.csv"))
+
+# TEMPORARY:
+wsp = read_csv(here::here("centrality-csvs/whosampled_pagerank.csv"))
+wsd = read_csv(here::here("centrality-csvs/whosampled_disruption.csv"), 
+               col_types = cols(
+                 .default = col_double(),
+                 X1 = col_character()
+               ))
+
+wsp = wsp %>% 
+  rename(artist = X1) %>% 
+  pivot_longer(-artist, names_to = "ano", values_to = "value") %>% 
+  mutate(name = artist) %>% 
+  group_by(ano) %>% 
+  mutate(theta = rank(value, ties.method = "average")/ n(), metric = "pagerank") %>% 
+  ungroup() %>% 
+  select(-value)
+
+wsd = wsd %>% 
+  rename(artist = X1) %>% 
+  pivot_longer(-artist, names_to = "ano", values_to = "value") %>% 
+  filter(!is.na(value)) %>% 
+  mutate(name = artist) %>% 
+  group_by(ano) %>% 
+  mutate(theta = rank(value, ties.method = "average") / n(), metric = "disruption") %>% 
+  ungroup() 
+
+glimpse(wsd)
+
+ws_t_raw = bind_rows(wsp, wsd)
+ws_t_raw = ws_t_raw %>% 
+  mutate(ano = as.numeric(ano))
+rm(wsd, wsp)
 ```
 
 
@@ -33,7 +67,7 @@ glimpse(ws_t_raw)
 ```
 
 ```{r}
-skimr::skim(ws_t_raw)
+#skimr::skim(ws_t_raw)
 ```
 
 ### Transform
@@ -50,7 +84,9 @@ ws_t = ws_t_raw %>%
   left_join(end_ranks, by = c("metric", "artist")) %>% 
   mutate(name = artist) %>% 
   group_by(metric, ano) %>% 
-  ungroup()
+  ungroup() %>% 
+  left_join(degrees, by = c("artist", "ano" = "year")) %>% 
+  filter(out_degree >= 5, in_degree >= 5)
 
 ws_t_wide = ws_t %>% 
   select(artist, name, ano, theta, metric) %>% 
@@ -58,7 +94,7 @@ ws_t_wide = ws_t %>%
 
 with_history = ws_t %>% 
   count(metric, artist) %>%
-  filter(n > 2) %>% 
+  filter(n >= 5) %>%    # <-- DIFFERENT FROM ALLMUSIC
   distinct(metric, artist) %>% 
   count(artist) %>% 
   filter(n == 2) %>% 
@@ -195,7 +231,7 @@ ws_t_wide %>%
 
 ```{r}
 ws_t_wide %>% 
-  filter(name %in% c("Stevie Wonder", "Jorge Ben", "Shirley Bassey", "Kraftwerk")) %>% 
+  filter(name %in% c("Bukas Palad", "Caetano Veloso", "Shirley Bassey", "Kraftwerk")) %>% 
   ggplot(aes(x = pagerank, y = disruption, group = artist)) +
   facet_wrap(~ name) +
   geom_line() + 
@@ -217,7 +253,8 @@ ws_s = ws_s %>%
     surprise_pr = pagerank_surprise_hyp_growth_t + 
       pagerank_surprise_hyp_past_t,
     surprise_total = surprise_disrupt + surprise_pr
-  )
+  )%>% 
+  filter(surprise_total != 0)
 ```
 
 ```{r}
@@ -237,7 +274,7 @@ whosampled =
   filter(!is.na(surprise_total)) %>% 
   group_by(artist) %>% 
   arrange(ano) %>% 
-  mutate(year_index = 1:n()) %>% 
+  mutate(year_index = 0:(n()-1) / (n()-1)) %>% 
   ungroup()
 
 glimpse(whosampled)
@@ -315,12 +352,27 @@ whosampled %>%
 ```{r}
 plot_trajectory = function(artists, df){
   df %>% 
-    filter(artist %in% artists) %>% 
-    ggplot(aes(x = pagerank, y = disruption, color = year_index, group = artist)) +
-    facet_wrap(~ name) +
-    geom_line(size = 1.2, alpha = .5) + 
-    geom_point(aes(size = surprise_total), alpha = .8) +
-    scale_color_continuous(trans = "reverse")
+    filter(artist %in% artists) %>%
+    mutate(first = year_index == 0) %>% 
+    ggplot(aes(
+      x = pagerank,
+      y = disruption,
+      color = year_index,
+      fill = year_index,
+      group = artist
+    )) +
+    facet_wrap( ~ name) +
+    geom_line(size = 0.4, color = "black") +
+    geom_point(aes(size = surprise_total), color = "black", alpha = .7, shape = 21) +
+    scale_fill_viridis(option = "magma", direction = -1) +
+    scale_size_area(trans = "sqrt", max_size = 10) + 
+    labs(
+      x = expression(1 - theta * " for PageRank"),
+      y = expression(1 - theta * " for Disruption"),
+      fill = "Prop. years\nactivity",
+      size = "Surprise"
+    )  + 
+    guides(shape = F)
 }
 ```
 
@@ -328,10 +380,16 @@ plot_trajectory = function(artists, df){
 From all years, it's always the first.
 
 ```{r}
+ws_t_h %>%
+  filter(artist == "TIEKS")
+```
+
+
+```{r}
 whosampled %>% 
   group_by(artist) %>% 
   summarise(surprise_total = max(surprise_total)) %>% 
-  top_n(4, surprise_total) %>% 
+  top_n(6, surprise_total) %>% 
   distinct(artist) %>% 
   pull(artist) %>% 
   plot_trajectory(whosampled)
@@ -339,17 +397,34 @@ whosampled %>%
 
 ```{r}
 ws_t %>% 
-  plot_traj_sbs(names = c("Kraftwerk"))
+  plot_traj_sbs(names = c("Pabllo Vittar"))
 ```
 
 ```{r}
-ws_t %>% 
-  filter(name == "Kraftwerk")
+whosampled %>% 
+  filter(name == "Miles Davis") %>% 
+  # filter(ano < 1995, ano > 1985) %>% 
+  pivot_longer(c("pagerank", "disruption"), names_to = "metric", values_to = "value") %>% 
+  ggplot(aes(x = ano, y = value, size = surprise_total)) + 
+  facet_wrap(~ metric) +
+  geom_point(alpha = .5) 
+```
+
+```{r}
+whosampled %>% 
+  filter(name == "Miles Davis") %>% 
+  # filter(ano > 1985) %>% 
+  pivot_longer(c("pagerank", "disruption"), names_to = "metric", values_to = "value") %>% 
+  pivot_longer(matches("surprise"), names_to = "surprise", values_to = "suprise_value") %>% 
+  ggplot(aes(x = ano, y = suprise_value)) + 
+  facet_wrap(~ surprise, ncol = 2) +
+  geom_point() + 
+  geom_line()
 ```
 
 
 ```{r}
-c("Kraftwerk") %>% 
+c("Taylor Swift") %>% 
   plot_trajectory(whosampled)
 ```
 
@@ -366,17 +441,29 @@ whosampled %>%
   top_n(9 , surprise_total) %>% 
   distinct(artist) %>% 
   pull(artist) %>% 
-  plot_trajectory(whosampled)
+  plot_trajectory(whosampled) 
+```
+
+```{r}
+whosampled %>% 
+  filter(year_index == 1) %>% 
+  top_n(100, wt = disruption) %>% View
 ```
 
 
 
-
 ```{r}
-whosampled %>% 
-  filter(name %in% c("Édith Piaf", "Miles Davis")) %>% 
-  pull(artist) %>% 
+c("Taylor Swift",
+  "Madonna",
+  "Grandmaster Flash",
+  "Massive Attack"
+  # "Björk"
+  # "DJ Shadow",
+  # "Miles Davis"
+  ) %>% 
   plot_trajectory(whosampled)
+
+ggsave(here::here("ws-trajectories.pdf"), width = 5, height = 5)
 ```
 
 
@@ -417,11 +504,11 @@ whosampled %>%
 ws_s_wide = whosampled %>% 
   pivot_longer(cols = matches("surprise"), names_to = "surprise") 
   
-ws_s_wide %>% 
-  ggplot(aes(x = value)) + 
-  geom_density() +
-  facet_grid(surprise ~ ano) + 
-  scale_x_log10(limits = c(1e-4, 1)) 
+# ws_s_wide %>% 
+#   ggplot(aes(x = value)) + 
+#   geom_density() +
+#   facet_grid(surprise ~ ano) + 
+#   scale_x_log10(limits = c(1e-4, 1)) 
 
 whosampled %>% 
   ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
@@ -468,3 +555,41 @@ whosampled %>%
   NULL
 ```
 
+```{r}
+rename_surprises = function(d){
+  d %>% 
+    mutate(
+    s_class = if_else(grepl("disrupt",surprise), "Disruption", "Pagerank"),
+    surprise = case_when(
+      surprise == "pagerank_surprise_hyp_past_t" ~ "Past Rank",			
+      surprise == "pagerank_surprise_hyp_growth_t"  ~ "Reg. Growth ",				
+      surprise == "disrupt_surprise_hyp_past_t" ~ "Past Rank",			
+      surprise == "disrupt_surprise_hyp_growth_t"~ "Reg. Growth ",				
+      surprise == "surprise_disrupt" ~ "Disruption, sum",			
+      surprise == "surprise_pr" ~ "Pagerank, sum"
+    )
+  )
+}
+
+ws_s_wide %>% 
+  filter(grepl("surprise", surprise), !str_starts(surprise, "surprise")) %>% 
+  rename_surprises() %>% 
+  group_by(s_class, surprise, ano) %>% 
+  summarise(value = sum(value)) %>% 
+  ggplot(aes(x = ano, y = value, fill = surprise)) + 
+  geom_area(alpha = .75) +
+  facet_wrap(~ s_class, ncol = 1) + 
+  theme(legend.position = "bottom",
+        plot.margin=grid::unit(c(0,0,0,0), "mm")
+        ) +
+  scale_fill_brewer(palette = "Set2") + 
+  labs (
+    x = "decade",
+    y = "Surprise",
+    fill = "Hypothesis"
+  ) + 
+  # scale_y_log10() +
+  NULL
+
+ggsave("ws-suprises-aggregate.pdf", width = 5, height = 5)
+```
