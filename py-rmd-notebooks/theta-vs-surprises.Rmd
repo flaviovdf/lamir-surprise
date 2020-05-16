@@ -12,7 +12,7 @@ library(here)
 library(viridis)
 library(broom)
 library(hrbrthemes)
-theme_set(theme_ipsum())
+theme_set(theme_ipsum(axis_title_size = 12))
 
 knitr::opts_chunk$set(tidy = FALSE,
                       fig.width = 6,
@@ -26,16 +26,11 @@ knitr::opts_chunk$set(tidy = FALSE,
 ```{r read}
 am_t_raw = read_csv(here::here("theta-csvs/theta_table_allmusic.csv.gz"))
 am_names = read_csv(here::here("centrality-csvs/allmusic_names.csv"), col_names = c("id", "name"), col_types = "c") 
-
-ws_t_raw = read_csv(here::here("theta-csvs/theta_table_whosampled.csv.gz"))
+degrees = read_csv(here::here("graph-csvs/allmusic-degrees.csv"))
 ```
 
 ```{r}
 glimpse(am_t_raw)
-```
-
-```{r}
-glimpse(ws_t_raw)
 ```
 
 ```{r}
@@ -53,12 +48,12 @@ end_ranks = am_t_raw %>%
 
 am_t = am_t_raw %>% 
   filter(ano >= 1960) %>% 
-  left_join(end_ranks, by = c("metric", "artist")) %>% 
-  group_by(metric, ano) %>% 
-  ungroup()
+  left_join(end_ranks, by = c("metric", "artist")) 
 
 am_t = am_t %>% 
-  left_join(am_names, by = c("artist" = "id")) 
+  left_join(am_names, by = c("artist" = "id")) %>% 
+  left_join(degrees, by = c("artist", "ano" = "year")) %>% 
+  filter(out_degree >= 5, in_degree >= 5)
 
 am_t_wide = am_t %>% 
   select(artist, name, ano, theta, metric) %>% 
@@ -221,7 +216,8 @@ am_s = am_s %>%
     surprise_pr = pagerank_surprise_hyp_growth_t + 
       pagerank_surprise_hyp_past_t,
     surprise_total = surprise_disrupt + surprise_pr
-  )
+  ) %>% 
+  filter(surprise_total != 0)
 ```
 
 ```{r}
@@ -288,7 +284,7 @@ allmusic %>%
   geom_boxplot(coef = 1e9) + 
   # geom_boxplot(coef = 1000) +
   labs(x = "Year index from appearance onwards") + 
-  ylim(-100, 100)
+  ylim(-10, 10)
 ```
 
 
@@ -296,8 +292,8 @@ allmusic %>%
 allmusic %>% 
   ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
   geom_point(alpha = .25, size = .5) + 
-  scale_x_log10() + 
-  scale_y_log10()
+  scale_x_log10(limits = c(1e-5, NA)) + 
+  scale_y_log10(limits = c(1e-5, NA))
 
 allmusic %>% 
   ggplot(aes(x = disrupt_surprise_hyp_past_t, y = disrupt_surprise_hyp_growth_t)) + 
@@ -321,18 +317,30 @@ allmusic %>%
 plot_trajectory = function(artists, df){
   df %>% 
     filter(artist %in% artists) %>% 
-    ggplot(aes(x = pagerank, y = disruption, color = year_index, group = artist)) +
-    facet_wrap(~ name) +
-    geom_line(size = 1.2, alpha = .5) + 
-    geom_point(aes(size = surprise_total), alpha = .8) +
-    scale_color_continuous(trans = "reverse")
+    ggplot(aes(
+      x = pagerank,
+      y = disruption,
+      color = year_index,
+      fill = year_index,
+      group = artist
+    )) +
+    facet_wrap( ~ name) +
+    geom_line(size = 0.4, color = "black") +
+    geom_point(aes(size = surprise_total), alpha = .8, shape = 21, color = "black") +
+    #scale_color_continuous(trans = "reverse") +
+    scale_fill_viridis(option = "magma", direction = -1) +
+    scale_size_area(trans = "sqrt", max_size = 10) + 
+    labs(
+      x = expression(1 - theta * " for PageRank"),
+      y = expression(1 - theta * " for Disruption"),
+      fill = "Decades active",
+      size = "Surprise"
+    )
 }
 ```
 
 
-From all years, it's always the first.
-
-```{r}
+```{r warning=FALSE}
 allmusic %>% 
   group_by(artist) %>% 
   summarise(surprise_total = max(surprise_total)) %>% 
@@ -341,6 +349,7 @@ allmusic %>%
   pull(artist) %>% 
   plot_trajectory(allmusic)
 ```
+
 
 ### Highest *after* first year
 
@@ -362,7 +371,7 @@ allmusic %>%
 
 ```{r}
 allmusic %>% 
-  filter(name %in% c("Édith Piaf", "Miles Davis")) %>% 
+  filter(name %in% c("Luny Tunes", "Frank Sinatra", "Miles Davis")) %>% 
   pull(artist) %>% 
   plot_trajectory(allmusic)
 ```
@@ -384,32 +393,41 @@ allmusic %>%
 
 Some interesting artists
 
-```{r}
+```{r warning=FALSE}
 allmusic %>%
   filter(
     name %in% c(
-      "Stevie Wonder",
-      "Jorge Ben",
-      "Shirley Bassey",
+      # "Stevie Wonder",
+      "Nina Simone",
+      # "Dua Lipa",
+      # "Shirley Bassey",
+      "Björk",
       "Fela Kuti",
-      "Miles Davis"
+      # "Miles Davis",
+      "Caetano Veloso"
     ),
     ano >= 1960
   ) %>%
   pull(artist) %>% 
-  plot_trajectory(allmusic)  + 
-  xlim(.3, 1)
+  plot_trajectory(allmusic) +
+  theme(legend.position = "bottom",
+        plot.margin=grid::unit(c(0,5,0,0), "mm"))
+
+  # xlim(.3, 1) + 
+  NULL
+
+ggsave(here::here("am-trajectories.pdf"), width = 5, height = 5)
 ```
 
 ```{r}
 am_s_wide = allmusic %>% 
   pivot_longer(cols = matches("surprise"), names_to = "surprise") 
   
-am_s_wide %>% 
-  ggplot(aes(x = value)) + 
-  geom_density() +
-  facet_grid(surprise ~ ano) + 
-  scale_x_log10(limits = c(1e-4, 1)) 
+# am_s_wide %>% 
+#   ggplot(aes(x = value)) + 
+#   geom_density() +
+#   facet_grid(surprise ~ ano) + 
+#   scale_x_log10(limits = c(1e-4, 1)) 
 
 allmusic %>% 
   ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
@@ -421,38 +439,78 @@ allmusic %>%
 ```
 
 ```{r}
+rename_surprises = function(d){
+  d %>% 
+    mutate(
+    s_class = if_else(grepl("disrupt",surprise), "Disruption", "Pagerank"),
+    surprise = case_when(
+      surprise == "pagerank_surprise_hyp_past_t" ~ "Past Rank",			
+      surprise == "pagerank_surprise_hyp_growth_t"  ~ "Reg. Growth ",				
+      surprise == "disrupt_surprise_hyp_past_t" ~ "Past Rank",			
+      surprise == "disrupt_surprise_hyp_growth_t"~ "Reg. Growth ",				
+      surprise == "surprise_disrupt" ~ "Disruption, sum",			
+      surprise == "surprise_pr" ~ "Pagerank, sum"
+    )
+  )
+}
+
 am_s_wide %>% 
-  filter(str_starts(surprise, "surprise")) %>% 
-  ggplot(aes(x = ano, y = value, group = ano, fill = surprise)) + 
+  filter(grepl("surprise", surprise), surprise != "surprise_total") %>% 
+  rename_surprises() %>% 
+  filter(value != 0) %>% 
+  ggplot(aes(x = ano, y = value, group = ano, fill = s_class)) + 
   geom_violin() +
-  geom_boxplot(width = .5, coef = 1e6, fill = "white") + 
-  facet_grid(. ~ surprise) + 
+  geom_boxplot(width = 2.5, coef = 1e6, fill = "white") + 
+  facet_wrap(~ surprise, ncol = 3) + 
   scale_y_log10(
-                limits = c(1e-4, 1e4)
+                # limits = c(1e-5, 1e1)
                 ) +
   theme(legend.position = "None") +
+  scale_fill_ft() + 
+  labs (
+    x = "decade",
+    y = "Surprise"
+  ) 
+```
+
+```{r}
+# library(showtext)
+# ## Loading Google fonts (https://fonts.google.com/)
+# font_add_google("Gochi Hand", "gochi")
+# font_add_google("Schoolbell", "bell")
+# 
+# ## Automatically use showtext to render text
+# showtext_auto()
+```
+
+
+```{r}
+am_s_wide %>% 
+  filter(grepl("surprise", surprise), !str_starts(surprise, "surprise")) %>% 
+  rename_surprises() %>% 
+  group_by(s_class, surprise, ano) %>% 
+  summarise(value = sum(value)) %>% 
+  ggplot(aes(x = ano, y = value, fill = surprise)) + 
+  geom_area(alpha = .75) +
+  facet_wrap(~ s_class, ncol = 1) + 
+  theme(legend.position = "bottom",
+        plot.margin=grid::unit(c(0,0,0,0), "mm")
+        ) +
+  scale_fill_brewer(palette = "Set2") + 
+  labs (
+    x = "decade",
+    y = "Surprise",
+    fill = "Hypothesis"
+  ) + 
   NULL
+
+ggsave("am-suprises-aggregate.pdf", width = 5, height = 5)
 ```
 
 ```{r}
 am_s_wide %>% 
-  group_by(surprise, ano) %>% 
-  summarise(value = sum(value)) %>% 
-  ggplot(aes(x = ano, y = value, group = surprise)) + 
-  geom_line() +
-  geom_point() +
-  facet_wrap(~ surprise, ncol = 2) 
-```
-
-
-```{r}
-allmusic %>% 
-  filter(ano >= 1960, metric == "pagerank") %>%
-  ggplot(aes(x = surprise_pr, y = surprise_disrupt)) + 
-  geom_point(alpha = .2, size = .5, color = "brown") + 
-  facet_wrap(~ano) +
-  scale_x_log10(limits = c(1e-6, 1e1)) + 
-  scale_y_log10() +
-  NULL
+  filter(ano %in% c(1990, 2000), str_starts(surprise, "surprise"), surprise != "surprise_total") %>% 
+  group_by(ano, surprise) %>% 
+  top_n(5, wt = value) %>% View
 ```
 
